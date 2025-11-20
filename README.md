@@ -1,3 +1,8 @@
+# Explain
+This is an experimental fork of v2fly/v2ray-core. Motivated by the discussion of cross layer RTT difference by Diwen Xue, this repo is intended to implement a dummy packet scheduler hide proxy traffic's RTT difference.
+
+Notice: This repo is currently for experiment only do not use for production.
+
 <div>
   <img width="190" height="210" align="left" src="https://raw.githubusercontent.com/v2fly/v2fly-github-io/master/docs/.vuepress/public/readme-logo.png" alt="V2Ray"/>
   <br>
