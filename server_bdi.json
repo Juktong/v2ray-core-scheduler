@@ -1,0 +1,32 @@
+{
+  "log": {
+    "loglevel": "debug"
+  },
+  "inbounds": [
+    {
+      "port": 10086,
+      "protocol": "vmess",
+      "settings": {
+        "clients": [
+          {
+            "id": "b831381d-6324-4d53-ad4f-8cda48b30811",
+            "alterId": 0
+          }
+        ],
+        "bdi_settings": {
+          "enabled": true,
+          "padding_min": 500,
+          "padding_max": 1000,
+          "jitter_min": 10,
+          "jitter_max": 50
+        }
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "protocol": "freedom",
+      "settings": {}
+    }
+  ]
+}

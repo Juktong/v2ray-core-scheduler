@@ -1,0 +1,38 @@
+{
+  "log": {
+    "loglevel": "debug"
+  },
+  "inbounds": [
+    {
+      "port": 1080,
+      "protocol": "socks",
+      "settings": {
+        "auth": "noauth"
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "protocol": "vmess",
+      "settings": {
+        "vnext": [
+          {
+            "address": "127.0.0.1",
+            "port": 10086,
+            "users": [
+              {
+                "id": "b831381d-6324-4d53-ad4f-8cda48b30811",
+                "alterId": 0,
+                "security": "aes-128-gcm"
+              }
+            ]
+          }
+        ],
+        "bdi_settings": {
+          "enabled": true,
+          "packet_rate": 2
+        }
+      }
+    }
+  ]
+}
