@@ -113,19 +113,98 @@ func (x *DefaultConfig) GetLevel() uint32 {
 	return 0
 }
 
+// [BDI] Traffic Shaping Configuration
+type BDIConfig struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Enabled       bool                   `protobuf:"varint,1,opt,name=enabled,proto3" json:"enabled,omitempty"`
+	PaddingMin    int32                  `protobuf:"varint,2,opt,name=padding_min,json=paddingMin,proto3" json:"padding_min,omitempty"` // e.g., 100 bytes
+	PaddingMax    int32                  `protobuf:"varint,3,opt,name=padding_max,json=paddingMax,proto3" json:"padding_max,omitempty"` // e.g., 1500 bytes
+	JitterMin     int32                  `protobuf:"varint,4,opt,name=jitter_min,json=jitterMin,proto3" json:"jitter_min,omitempty"`    // e.g., 5 ms
+	JitterMax     int32                  `protobuf:"varint,5,opt,name=jitter_max,json=jitterMax,proto3" json:"jitter_max,omitempty"`    // e.g., 50 ms
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BDIConfig) Reset() {
+	*x = BDIConfig{}
+	mi := &file_proxy_vmess_inbound_config_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BDIConfig) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BDIConfig) ProtoMessage() {}
+
+func (x *BDIConfig) ProtoReflect() protoreflect.Message {
+	mi := &file_proxy_vmess_inbound_config_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BDIConfig.ProtoReflect.Descriptor instead.
+func (*BDIConfig) Descriptor() ([]byte, []int) {
+	return file_proxy_vmess_inbound_config_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *BDIConfig) GetEnabled() bool {
+	if x != nil {
+		return x.Enabled
+	}
+	return false
+}
+
+func (x *BDIConfig) GetPaddingMin() int32 {
+	if x != nil {
+		return x.PaddingMin
+	}
+	return 0
+}
+
+func (x *BDIConfig) GetPaddingMax() int32 {
+	if x != nil {
+		return x.PaddingMax
+	}
+	return 0
+}
+
+func (x *BDIConfig) GetJitterMin() int32 {
+	if x != nil {
+		return x.JitterMin
+	}
+	return 0
+}
+
+func (x *BDIConfig) GetJitterMax() int32 {
+	if x != nil {
+		return x.JitterMax
+	}
+	return 0
+}
+
 type Config struct {
 	state                protoimpl.MessageState `protogen:"open.v1"`
 	User                 []*protocol.User       `protobuf:"bytes,1,rep,name=user,proto3" json:"user,omitempty"`
 	Default              *DefaultConfig         `protobuf:"bytes,2,opt,name=default,proto3" json:"default,omitempty"`
 	Detour               *DetourConfig          `protobuf:"bytes,3,opt,name=detour,proto3" json:"detour,omitempty"`
 	SecureEncryptionOnly bool                   `protobuf:"varint,4,opt,name=secure_encryption_only,json=secureEncryptionOnly,proto3" json:"secure_encryption_only,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	// [BDI] Add BDI config to inbound
+	BdiSettings   *BDIConfig `protobuf:"bytes,5,opt,name=bdi_settings,json=bdiSettings,proto3" json:"bdi_settings,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Config) Reset() {
 	*x = Config{}
-	mi := &file_proxy_vmess_inbound_config_proto_msgTypes[2]
+	mi := &file_proxy_vmess_inbound_config_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -137,7 +216,7 @@ func (x *Config) String() string {
 func (*Config) ProtoMessage() {}
 
 func (x *Config) ProtoReflect() protoreflect.Message {
-	mi := &file_proxy_vmess_inbound_config_proto_msgTypes[2]
+	mi := &file_proxy_vmess_inbound_config_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -150,7 +229,7 @@ func (x *Config) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Config.ProtoReflect.Descriptor instead.
 func (*Config) Descriptor() ([]byte, []int) {
-	return file_proxy_vmess_inbound_config_proto_rawDescGZIP(), []int{2}
+	return file_proxy_vmess_inbound_config_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *Config) GetUser() []*protocol.User {
@@ -181,6 +260,13 @@ func (x *Config) GetSecureEncryptionOnly() bool {
 	return false
 }
 
+func (x *Config) GetBdiSettings() *BDIConfig {
+	if x != nil {
+		return x.BdiSettings
+	}
+	return nil
+}
+
 type SimplifiedConfig struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Users         []string               `protobuf:"bytes,1,rep,name=users,proto3" json:"users,omitempty"`
@@ -190,7 +276,7 @@ type SimplifiedConfig struct {
 
 func (x *SimplifiedConfig) Reset() {
 	*x = SimplifiedConfig{}
-	mi := &file_proxy_vmess_inbound_config_proto_msgTypes[3]
+	mi := &file_proxy_vmess_inbound_config_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -202,7 +288,7 @@ func (x *SimplifiedConfig) String() string {
 func (*SimplifiedConfig) ProtoMessage() {}
 
 func (x *SimplifiedConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_proxy_vmess_inbound_config_proto_msgTypes[3]
+	mi := &file_proxy_vmess_inbound_config_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -215,7 +301,7 @@ func (x *SimplifiedConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SimplifiedConfig.ProtoReflect.Descriptor instead.
 func (*SimplifiedConfig) Descriptor() ([]byte, []int) {
-	return file_proxy_vmess_inbound_config_proto_rawDescGZIP(), []int{3}
+	return file_proxy_vmess_inbound_config_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *SimplifiedConfig) GetUsers() []string {
@@ -234,16 +320,27 @@ const file_proxy_vmess_inbound_config_proto_rawDesc = "" +
 	"\x02to\x18\x01 \x01(\tR\x02to\"@\n" +
 	"\rDefaultConfig\x12\x19\n" +
 	"\balter_id\x18\x01 \x01(\rR\aalterId\x12\x14\n" +
-	"\x05level\x18\x02 \x01(\rR\x05level\"\x83\x02\n" +
+	"\x05level\x18\x02 \x01(\rR\x05level\"\xa5\x01\n" +
+	"\tBDIConfig\x12\x18\n" +
+	"\aenabled\x18\x01 \x01(\bR\aenabled\x12\x1f\n" +
+	"\vpadding_min\x18\x02 \x01(\x05R\n" +
+	"paddingMin\x12\x1f\n" +
+	"\vpadding_max\x18\x03 \x01(\x05R\n" +
+	"paddingMax\x12\x1d\n" +
+	"\n" +
+	"jitter_min\x18\x04 \x01(\x05R\tjitterMin\x12\x1d\n" +
+	"\n" +
+	"jitter_max\x18\x05 \x01(\x05R\tjitterMax\"\xd1\x02\n" +
 	"\x06Config\x124\n" +
 	"\x04user\x18\x01 \x03(\v2 .v2ray.core.common.protocol.UserR\x04user\x12G\n" +
 	"\adefault\x18\x02 \x01(\v2-.v2ray.core.proxy.vmess.inbound.DefaultConfigR\adefault\x12D\n" +
 	"\x06detour\x18\x03 \x01(\v2,.v2ray.core.proxy.vmess.inbound.DetourConfigR\x06detour\x124\n" +
-	"\x16secure_encryption_only\x18\x04 \x01(\bR\x14secureEncryptionOnly\">\n" +
+	"\x16secure_encryption_only\x18\x04 \x01(\bR\x14secureEncryptionOnly\x12L\n" +
+	"\fbdi_settings\x18\x05 \x01(\v2).v2ray.core.proxy.vmess.inbound.BDIConfigR\vbdiSettings\">\n" +
 	"\x10SimplifiedConfig\x12\x14\n" +
 	"\x05users\x18\x01 \x03(\tR\x05users:\x14\x82\xb5\x18\x10\n" +
-	"\ainbound\x12\x05vmessB{\n" +
-	"\"com.v2ray.core.proxy.vmess.inboundP\x01Z2github.com/v2fly/v2ray-core/v5/proxy/vmess/inbound\xaa\x02\x1eV2Ray.Core.Proxy.Vmess.Inboundb\x06proto3"
+	"\ainbound\x12\x05vmessBZ\n" +
+	"\"com.v2ray.core.proxy.vmess.inboundP\x01Z2github.com/v2fly/v2ray-core/v5/proxy/vmess/inboundb\x06proto3"
 
 var (
 	file_proxy_vmess_inbound_config_proto_rawDescOnce sync.Once
@@ -257,23 +354,25 @@ func file_proxy_vmess_inbound_config_proto_rawDescGZIP() []byte {
 	return file_proxy_vmess_inbound_config_proto_rawDescData
 }
 
-var file_proxy_vmess_inbound_config_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
+var file_proxy_vmess_inbound_config_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
 var file_proxy_vmess_inbound_config_proto_goTypes = []any{
 	(*DetourConfig)(nil),     // 0: v2ray.core.proxy.vmess.inbound.DetourConfig
 	(*DefaultConfig)(nil),    // 1: v2ray.core.proxy.vmess.inbound.DefaultConfig
-	(*Config)(nil),           // 2: v2ray.core.proxy.vmess.inbound.Config
-	(*SimplifiedConfig)(nil), // 3: v2ray.core.proxy.vmess.inbound.SimplifiedConfig
-	(*protocol.User)(nil),    // 4: v2ray.core.common.protocol.User
+	(*BDIConfig)(nil),        // 2: v2ray.core.proxy.vmess.inbound.BDIConfig
+	(*Config)(nil),           // 3: v2ray.core.proxy.vmess.inbound.Config
+	(*SimplifiedConfig)(nil), // 4: v2ray.core.proxy.vmess.inbound.SimplifiedConfig
+	(*protocol.User)(nil),    // 5: v2ray.core.common.protocol.User
 }
 var file_proxy_vmess_inbound_config_proto_depIdxs = []int32{
-	4, // 0: v2ray.core.proxy.vmess.inbound.Config.user:type_name -> v2ray.core.common.protocol.User
+	5, // 0: v2ray.core.proxy.vmess.inbound.Config.user:type_name -> v2ray.core.common.protocol.User
 	1, // 1: v2ray.core.proxy.vmess.inbound.Config.default:type_name -> v2ray.core.proxy.vmess.inbound.DefaultConfig
 	0, // 2: v2ray.core.proxy.vmess.inbound.Config.detour:type_name -> v2ray.core.proxy.vmess.inbound.DetourConfig
-	3, // [3:3] is the sub-list for method output_type
-	3, // [3:3] is the sub-list for method input_type
-	3, // [3:3] is the sub-list for extension type_name
-	3, // [3:3] is the sub-list for extension extendee
-	0, // [0:3] is the sub-list for field type_name
+	2, // 3: v2ray.core.proxy.vmess.inbound.Config.bdi_settings:type_name -> v2ray.core.proxy.vmess.inbound.BDIConfig
+	4, // [4:4] is the sub-list for method output_type
+	4, // [4:4] is the sub-list for method input_type
+	4, // [4:4] is the sub-list for extension type_name
+	4, // [4:4] is the sub-list for extension extendee
+	0, // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_proxy_vmess_inbound_config_proto_init() }
@@ -287,7 +386,7 @@ func file_proxy_vmess_inbound_config_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proxy_vmess_inbound_config_proto_rawDesc), len(file_proxy_vmess_inbound_config_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   4,
+			NumMessages:   5,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

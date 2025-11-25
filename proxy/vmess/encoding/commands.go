@@ -147,3 +147,16 @@ func (f *CommandSwitchAccountFactory) Unmarshal(data []byte) (interface{}, error
 	cmd.ValidMin = data[timeStart]
 	return cmd, nil
 }
+
+// [BDI] CommandDummy carries the instruction for the client to skip specific padding.
+type CommandDummy struct {
+	PaddingLength uint16
+}
+
+// [BDI] Marshal writes the Dummy Command data (Length + Payload) to the writer.
+func (c *CommandDummy) Marshal(writer io.Writer) {
+	// [BDI] Write the length of the command data. For BDI Dummy, it's exactly 2 bytes (the uint16 length).
+	common.Must2(writer.Write([]byte{0x02}))
+	// [BDI] Write the actual Padding Length value (Big Endian) that the client needs to skip.
+	common.Must(binary.Write(writer, binary.BigEndian, c.PaddingLength))
+}

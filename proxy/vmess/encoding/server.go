@@ -239,6 +239,11 @@ func (s *ServerSession) DecodeRequestHeader(reader io.Reader) (*protocol.Request
 	// 1 bytes reserved
 	request.Command = protocol.RequestCommand(buffer.Byte(37))
 
+	// [BDI Modified] Check if this is a Dummy Packet based on the Option bit (0x20)
+	if request.Option.Has(protocol.RequestOptionDummyPacket) {
+		request.IsDummy = true
+	}
+
 	switch request.Command {
 	case protocol.RequestCommandMux:
 		request.Address = net.DomainAddress("v1.mux.cool")
@@ -249,6 +254,13 @@ func (s *ServerSession) DecodeRequestHeader(reader io.Reader) (*protocol.Request
 			request.Address = addr
 			request.Port = port
 		}
+	case protocol.RequestCommandDummy:
+		// [BDI Modified] For safety, even if the Command byte says Dummy, we try to read a fake address
+		// to maintain protocol structure (so the checksum is valid), or simply set a dummy address.
+		// This block handles the VLESS-style command if it were used here, though VMess typically uses the Option bit.
+		request.Address = net.LocalHostIP
+		request.Port = 0
+		request.IsDummy = true
 	}
 
 	if paddingLen > 0 {
@@ -419,9 +431,25 @@ func (s *ServerSession) EncodeResponseHeader(header *protocol.ResponseHeader, wr
 	}
 
 	common.Must2(encryptionWriter.Write([]byte{s.responseHeader, byte(header.Option)}))
-	err := MarshalCommand(header.Command, encryptionWriter)
-	if err != nil {
-		common.Must2(encryptionWriter.Write([]byte{0x00, 0x00}))
+
+	// [BDI Modified] Handle Dummy Response Command injection
+	switch cmd := header.Command.(type) {
+	case *CommandDummy:
+		// Write Command ID, data length, and the padding length payload (2 bytes)
+		common.Must2(encryptionWriter.Write([]byte{protocol.ResponseCommandDummy, 0x02}))
+		var payload [2]byte
+		binary.BigEndian.PutUint16(payload[:], cmd.PaddingLength)
+		common.Must2(encryptionWriter.Write(payload[:]))
+	case byte:
+		if cmd == protocol.ResponseCommandDummy {
+			common.Must2(encryptionWriter.Write([]byte{protocol.ResponseCommandDummy, 0x00}))
+			break
+		}
+	default:
+		err := MarshalCommand(header.Command, encryptionWriter)
+		if err != nil {
+			common.Must2(encryptionWriter.Write([]byte{0x00, 0x00}))
+		}
 	}
 
 	if s.isAEADRequest {

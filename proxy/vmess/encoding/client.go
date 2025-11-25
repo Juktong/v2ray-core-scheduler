@@ -47,6 +47,9 @@ type ClientSession struct {
 	responseHeader  byte
 
 	readDrainer drain.Drainer
+
+	// [BDI] Bytes to discard from the start of the response body
+	pendingPaddingToSkip int
 }
 
 // NewClientSession creates a new ClientSession.
@@ -94,6 +97,11 @@ func (c *ClientSession) EncodeRequestHeader(header *protocol.RequestHeader, writ
 
 	buffer := buf.New()
 	defer buffer.Release()
+
+	// [BDI] Set the dummy packet flag if this request is a dummy injection
+	if header.IsDummy {
+		header.Option |= protocol.RequestOptionDummyPacket
+	}
 
 	common.Must(buffer.WriteByte(Version))
 	common.Must2(buffer.Write(c.requestBodyIV[:]))
@@ -298,9 +306,18 @@ func (c *ClientSession) DecodeResponseHeader(reader io.Reader) (*protocol.Respon
 		if _, err := buffer.ReadFullFrom(c.responseReader, dataLen); err != nil {
 			return nil, newError("failed to read response command").Base(err)
 		}
-		command, err := UnmarshalCommand(cmdID, buffer.Bytes())
-		if err == nil {
-			header.Command = command
+
+		// [BDI] Handle Dummy Response Command
+		if cmdID == protocol.ResponseCommandDummy {
+			if dataLen >= 2 {
+				c.pendingPaddingToSkip = int(binary.BigEndian.Uint16(buffer.Bytes()))
+			}
+			// Leave header.Command nil so it's treated as a no-op
+		} else {
+			command, err := UnmarshalCommand(cmdID, buffer.Bytes())
+			if err == nil {
+				header.Command = command
+			}
 		}
 	}
 	if c.isAEAD {
@@ -308,6 +325,40 @@ func (c *ClientSession) DecodeResponseHeader(reader io.Reader) (*protocol.Respon
 		c.responseReader = crypto.NewCryptionReader(aesStream, reader)
 	}
 	return header, nil
+}
+
+// [BDI] paddingStripperReader wraps a buf.Reader and discards N bytes from the start.
+type paddingStripperReader struct {
+	reader      buf.Reader
+	bytesToSkip int
+}
+
+func (r *paddingStripperReader) ReadMultiBuffer() (buf.MultiBuffer, error) {
+	for r.bytesToSkip > 0 {
+		mb, err := r.reader.ReadMultiBuffer()
+		if err != nil {
+			return nil, err
+		}
+
+		length := int(mb.Len())
+		if length <= r.bytesToSkip {
+			r.bytesToSkip -= length
+			buf.ReleaseMulti(mb)
+			continue // Consume next buffer
+		}
+
+		// length > bytesToSkip. We need to split the buffer.
+		// [BDI Fixed] Use buf.SplitSize to separate the padding (Head) from real data (Tail).
+		// SplitSize returns (leftover/tail, splitPart/head).
+		// We want 'leftover' (real data) and release 'splitPart' (padding).
+		leftover, padding := buf.SplitSize(mb, int32(r.bytesToSkip))
+		buf.ReleaseMulti(padding)
+
+		r.bytesToSkip = 0
+		return leftover, nil
+	}
+
+	return r.reader.ReadMultiBuffer()
 }
 
 func (c *ClientSession) DecodeResponseBody(request *protocol.RequestHeader, reader io.Reader) (buf.Reader, error) {
@@ -324,23 +375,25 @@ func (c *ClientSession) DecodeResponseBody(request *protocol.RequestHeader, read
 		}
 	}
 
+	var bodyReader buf.Reader
+
 	switch request.Security {
 	case protocol.SecurityType_NONE:
 		if request.Option.Has(protocol.RequestOptionChunkStream) {
 			if request.Command.TransferType() == protocol.TransferTypeStream {
-				return crypto.NewChunkStreamReader(sizeParser, reader), nil
+				bodyReader = crypto.NewChunkStreamReader(sizeParser, reader)
+			} else {
+				auth := &crypto.AEADAuthenticator{
+					AEAD:                    new(NoOpAuthenticator),
+					NonceGenerator:          crypto.GenerateEmptyBytes(),
+					AdditionalDataGenerator: crypto.GenerateEmptyBytes(),
+				}
+				bodyReader = crypto.NewAuthenticationReader(auth, sizeParser, reader, protocol.TransferTypePacket, padding)
 			}
-
-			auth := &crypto.AEADAuthenticator{
-				AEAD:                    new(NoOpAuthenticator),
-				NonceGenerator:          crypto.GenerateEmptyBytes(),
-				AdditionalDataGenerator: crypto.GenerateEmptyBytes(),
-			}
-
-			return crypto.NewAuthenticationReader(auth, sizeParser, reader, protocol.TransferTypePacket, padding), nil
+		} else {
+			bodyReader = buf.NewReader(reader)
 		}
 
-		return buf.NewReader(reader), nil
 	case protocol.SecurityType_LEGACY:
 		if request.Option.Has(protocol.RequestOptionChunkStream) {
 			auth := &crypto.AEADAuthenticator{
@@ -348,13 +401,13 @@ func (c *ClientSession) DecodeResponseBody(request *protocol.RequestHeader, read
 				NonceGenerator:          crypto.GenerateEmptyBytes(),
 				AdditionalDataGenerator: crypto.GenerateEmptyBytes(),
 			}
-			return crypto.NewAuthenticationReader(auth, sizeParser, c.responseReader, request.Command.TransferType(), padding), nil
+			bodyReader = crypto.NewAuthenticationReader(auth, sizeParser, c.responseReader, request.Command.TransferType(), padding)
+		} else {
+			bodyReader = buf.NewReader(c.responseReader)
 		}
 
-		return buf.NewReader(c.responseReader), nil
 	case protocol.SecurityType_AES128_GCM:
 		aead := crypto.NewAesGcm(c.responseBodyKey[:])
-
 		auth := &crypto.AEADAuthenticator{
 			AEAD:                    aead,
 			NonceGenerator:          GenerateChunkNonce(c.responseBodyIV[:], uint32(aead.NonceSize())),
@@ -371,10 +424,10 @@ func (c *ClientSession) DecodeResponseBody(request *protocol.RequestHeader, read
 			}
 			sizeParser = NewAEADSizeParser(lengthAuth)
 		}
-		return crypto.NewAuthenticationReader(auth, sizeParser, reader, request.Command.TransferType(), padding), nil
+		bodyReader = crypto.NewAuthenticationReader(auth, sizeParser, reader, request.Command.TransferType(), padding)
+
 	case protocol.SecurityType_CHACHA20_POLY1305:
 		aead, _ := chacha20poly1305.New(GenerateChacha20Poly1305Key(c.responseBodyKey[:]))
-
 		auth := &crypto.AEADAuthenticator{
 			AEAD:                    aead,
 			NonceGenerator:          GenerateChunkNonce(c.responseBodyIV[:], uint32(aead.NonceSize())),
@@ -392,10 +445,21 @@ func (c *ClientSession) DecodeResponseBody(request *protocol.RequestHeader, read
 			}
 			sizeParser = NewAEADSizeParser(lengthAuth)
 		}
-		return crypto.NewAuthenticationReader(auth, sizeParser, reader, request.Command.TransferType(), padding), nil
+		bodyReader = crypto.NewAuthenticationReader(auth, sizeParser, reader, request.Command.TransferType(), padding)
+
 	default:
 		return nil, newError("invalid option: Security")
 	}
+
+	// [BDI] Apply padding stripper if needed
+	if c.pendingPaddingToSkip > 0 {
+		return &paddingStripperReader{
+			reader:      bodyReader,
+			bytesToSkip: c.pendingPaddingToSkip,
+		}, nil
+	}
+
+	return bodyReader, nil
 }
 
 func GenerateChunkNonce(nonce []byte, size uint32) crypto.BytesGenerator {

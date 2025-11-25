@@ -17,11 +17,13 @@ const (
 	RequestCommandTCP = RequestCommand(0x01)
 	RequestCommandUDP = RequestCommand(0x02)
 	RequestCommandMux = RequestCommand(0x03)
+	// [BDI] RequestCommandDummy signals that the traffic is fake and should be dropped.
+	RequestCommandDummy = RequestCommand(0x04)
 )
 
 func (c RequestCommand) TransferType() TransferType {
 	switch c {
-	case RequestCommandTCP, RequestCommandMux:
+	case RequestCommandTCP, RequestCommandMux, RequestCommandDummy:
 		return TransferTypeStream
 	case RequestCommandUDP:
 		return TransferTypePacket
@@ -42,6 +44,9 @@ const (
 	RequestOptionGlobalPadding bitmask.Byte = 0x08
 
 	RequestOptionAuthenticatedLength bitmask.Byte = 0x10
+
+	// [BDI] RequestOptionDummyPacket indicates the entire connection is a fake stream.
+	RequestOptionDummyPacket bitmask.Byte = 0x20
 )
 
 type RequestHeader struct {
@@ -52,6 +57,8 @@ type RequestHeader struct {
 	Port     net.Port
 	Address  net.Address
 	User     *MemoryUser
+	// [BDI] IsDummy marks this header as belonging to a dummy packet for traffic shaping.
+	IsDummy bool
 }
 
 func (h *RequestHeader) Destination() net.Destination {
@@ -63,6 +70,8 @@ func (h *RequestHeader) Destination() net.Destination {
 
 const (
 	ResponseOptionConnectionReuse bitmask.Byte = 0x01
+	// [BDI] ResponseCommandDummy is the command ID for fake response traffic (0x02)
+	ResponseCommandDummy byte = 0x02
 )
 
 type ResponseCommand interface{}

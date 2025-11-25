@@ -7,6 +7,9 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"hash/crc64"
+	"math/rand"
+	"sync"
+	"time"
 
 	core "github.com/v2fly/v2ray-core/v5"
 	"github.com/v2fly/v2ray-core/v5/common"
@@ -27,11 +30,38 @@ import (
 	"github.com/v2fly/v2ray-core/v5/transport/internet"
 )
 
+// [BDI] RTTStats maintains a moving average of the Round Trip Time
+type RTTStats struct {
+	sync.Mutex
+	avg time.Duration
+}
+
+func (s *RTTStats) Update(val time.Duration) {
+	s.Lock()
+	defer s.Unlock()
+	if s.avg == 0 {
+		s.avg = val
+	} else {
+		// Exponential Moving Average with alpha=0.2
+		s.avg = time.Duration(float64(s.avg)*0.8 + float64(val)*0.2)
+	}
+}
+
+func (s *RTTStats) Get() time.Duration {
+	s.Lock()
+	defer s.Unlock()
+	if s.avg == 0 {
+		return 300 * time.Millisecond // Default pessimistic guess
+	}
+	return s.avg
+}
+
 // Handler is an outbound connection handler for VMess protocol.
 type Handler struct {
 	serverList    *protocol.ServerList
 	serverPicker  protocol.ServerPicker
 	policyManager policy.Manager
+	rttStats      *RTTStats // [BDI] Estimator for Delta_Remote
 }
 
 // New creates a new VMess outbound handler.
@@ -50,9 +80,71 @@ func New(ctx context.Context, config *Config) (*Handler, error) {
 		serverList:    serverList,
 		serverPicker:  protocol.NewRoundRobinServerPicker(serverList),
 		policyManager: v.GetFeature(policy.ManagerType()).(policy.Manager),
+		rttStats:      &RTTStats{}, // [BDI] Initialize estimator
 	}
 
 	return handler, nil
+}
+
+// [BDI] sendDummyRequest establishes a separate connection to inject fake upstream traffic.
+func (h *Handler) sendDummyRequest(ctx context.Context, dialer internet.Dialer, rec *protocol.ServerSpec) {
+	// 1. Establish connection
+	conn, err := dialer.Dial(ctx, rec.Destination())
+	if err != nil {
+		return // Best effort, ignore errors
+	}
+	defer conn.Close()
+
+	// 2. Prepare Dummy Header
+	user := rec.PickUser()
+	account := user.Account.(*vmess.MemoryAccount)
+
+	request := &protocol.RequestHeader{
+		Version:  encoding.Version,
+		User:     user,
+		Command:  protocol.RequestCommandTCP, // Command doesn't matter much as IsDummy is true
+		Address:  net.LocalHostIP,            // Fake address
+		Port:     0,
+		Option:   protocol.RequestOptionChunkStream,
+		Security: account.Security,
+		IsDummy:  true, // [BDI] CRITICAL: Flag this as a dummy packet
+	}
+
+	if request.Security == protocol.SecurityType_ZERO {
+		request.Security = protocol.SecurityType_NONE
+	}
+
+	// 3. Initialize Crypto Session
+	isAEAD := !aeadDisabled && len(account.AlterIDs) == 0
+	hashkdf := hmac.New(sha256.New, []byte("VMessBF"))
+	hashkdf.Write(account.ID.Bytes())
+	behaviorSeed := crc64.Checksum(hashkdf.Sum(nil), crc64.MakeTable(crc64.ISO))
+	session := encoding.NewClientSession(ctx, isAEAD, protocol.DefaultIDHash, int64(behaviorSeed))
+
+	// 4. Write Data
+	writer := buf.NewBufferedWriter(buf.NewWriter(conn))
+
+	// Encode Header
+	if err := session.EncodeRequestHeader(request, writer); err != nil {
+		return
+	}
+
+	// Encode Random Body (Size randomization: 100 - 1500 bytes)
+	bodyWriter, err := session.EncodeRequestBody(request, writer)
+	if err != nil {
+		return
+	}
+
+	dummySize := rand.Intn(1400) + 100
+	dummyData := make([]byte, dummySize)
+	rand.Read(dummyData)
+
+	b := buf.New()
+	b.Write(dummyData)
+	bodyWriter.WriteMultiBuffer(buf.MultiBuffer{b})
+
+	writer.Flush()
+	// Connection closes on defer
 }
 
 // Process implements proxy.Outbound.Process().
@@ -141,6 +233,12 @@ func (h *Handler) Process(ctx context.Context, link *transport.Link, dialer inte
 	ctx, cancel := context.WithCancel(ctx)
 	timer := signal.CancelAfterInactivity(ctx, cancel, sessionPolicy.Timeouts.ConnectionIdle)
 
+	// [BDI] Start Time Measurement for Estimator
+	requestStartTime := time.Now()
+
+	// [BDI] Signal channel to cancel dummy packet if real response arrives
+	headerReceived := make(chan struct{})
+
 	requestDone := func() error {
 		defer timer.SetTimeout(sessionPolicy.Timeouts.DownlinkOnly)
 
@@ -160,6 +258,30 @@ func (h *Handler) Process(ctx context.Context, link *transport.Link, dialer inte
 		if err := writer.SetBuffered(false); err != nil {
 			return err
 		}
+
+		// [BDI] Scheduler for Fake Uplink Request
+		// Trigger logic: Wait for (EstimatedRTT * factor), then fire if no response yet.
+		go func() {
+			avgRTT := h.rttStats.Get()
+			// Wait between 50% and 80% of the estimated RTT
+			waitRatio := 0.5 + rand.Float64()*0.3
+			waitTime := time.Duration(float64(avgRTT) * waitRatio)
+
+			timer := time.NewTimer(waitTime)
+			defer timer.Stop()
+
+			select {
+			case <-headerReceived:
+				// Real response arrived, no need for dummy
+				return
+			case <-ctx.Done():
+				// Connection closed
+				return
+			case <-timer.C:
+				// Time is up, real response still missing. Inject Fake Request.
+				h.sendDummyRequest(context.Background(), dialer, rec)
+			}
+		}()
 
 		if err := buf.Copy(input, bodyWriter, buf.UpdateActivity(timer)); err != nil {
 			return err
@@ -182,6 +304,13 @@ func (h *Handler) Process(ctx context.Context, link *transport.Link, dialer inte
 		if err != nil {
 			return newError("failed to read header").Base(err)
 		}
+
+		// [BDI] Mark header as received to cancel/prevent dummy packet
+		close(headerReceived)
+
+		// [BDI] Update Estimator with actual RTT
+		h.rttStats.Update(time.Since(requestStartTime))
+
 		h.handleCommand(rec.Destination(), header.Command)
 
 		bodyReader, err := session.DecodeResponseBody(request, reader)

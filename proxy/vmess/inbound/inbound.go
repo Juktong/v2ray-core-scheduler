@@ -5,6 +5,7 @@ package inbound
 import (
 	"context"
 	"io"
+	"math/rand"
 	"strings"
 	"sync"
 	"time"
@@ -109,6 +110,7 @@ type Handler struct {
 	detours               *DetourConfig
 	sessionHistory        *encoding.SessionHistory
 	secure                bool
+	bdiConfig             *BDIConfig // [BDI] Store configuration
 }
 
 // New creates a new VMess inbound handler.
@@ -122,6 +124,7 @@ func New(ctx context.Context, config *Config) (*Handler, error) {
 		usersByEmail:          newUserByEmail(config.GetDefaultValue()),
 		sessionHistory:        encoding.NewSessionHistory(),
 		secure:                config.SecureEncryptionOnly,
+		bdiConfig:             config.GetBDISettings(), // [BDI] Load Config
 	}
 
 	for _, user := range config.User {
@@ -177,13 +180,38 @@ func (h *Handler) RemoveUser(ctx context.Context, email string) error {
 	return nil
 }
 
-func transferResponse(timer signal.ActivityUpdater, session *encoding.ServerSession, request *protocol.RequestHeader, response *protocol.ResponseHeader, input buf.Reader, output *buf.BufferedWriter) error {
+// [BDI Modified] transferResponse now accepts padding bytes to be injected at the start of the stream
+func (h *Handler) transferResponse(timer signal.ActivityUpdater, session *encoding.ServerSession, request *protocol.RequestHeader, response *protocol.ResponseHeader, input buf.Reader, output *buf.BufferedWriter, padding []byte) error {
 	session.EncodeResponseHeader(response, output)
+
+	// [BDI Change] Flush header immediately to mask latency gap
+	if h.bdiConfig.Enabled {
+		if err := output.Flush(); err != nil {
+			return err
+		}
+	}
 
 	bodyWriter, err := session.EncodeResponseBody(request, output)
 	if err != nil {
 		return newError("failed to start decoding response").Base(err)
 	}
+
+	// [BDI Change] Write Padding Bytes (Garbage Payload)
+	// We must write this *before* we attempt to read from 'input' (which might block waiting for the backend)
+	if len(padding) > 0 {
+		b := buf.New()
+		b.Write(padding)
+		if err := bodyWriter.WriteMultiBuffer(buf.MultiBuffer{b}); err != nil {
+			return newError("failed to write BDI padding").Base(err)
+		}
+		// Flush the padding out to the network
+		if h.bdiConfig.Enabled {
+			if err := output.Flush(); err != nil {
+				return err
+			}
+		}
+	}
+
 	{
 		// Optimize for small response packet
 		data, err := input.ReadMultiBuffer()
@@ -241,6 +269,11 @@ func (h *Handler) Process(ctx context.Context, network net.Network, connection i
 			err = newError("invalid request from ", connection.RemoteAddr()).Base(err).AtInfo()
 		}
 		return err
+	}
+
+	// [BDI Change] Drop Dummy Requests silently
+	if request.IsDummy {
+		return nil
 	}
 
 	if h.secure && isInsecureEncryption(request.Security) {
@@ -303,13 +336,50 @@ func (h *Handler) Process(ctx context.Context, network net.Network, connection i
 	responseDone := func() error {
 		defer timer.SetTimeout(sessionPolicy.Timeouts.UplinkOnly)
 
+		// [BDI Change] Server Jitter
+		if h.bdiConfig.Enabled {
+			// Random sleep between JitterMin and JitterMax (e.g. 5-50ms)
+			min := int(h.bdiConfig.JitterMin)
+			max := int(h.bdiConfig.JitterMax)
+			if max > min {
+				sleep := time.Duration(rand.Intn(max-min)+min) * time.Millisecond
+				time.Sleep(sleep)
+			}
+		}
+
 		writer := buf.NewBufferedWriter(buf.NewWriter(connection))
 		defer writer.Flush()
 
-		response := &protocol.ResponseHeader{
-			Command: h.generateCommand(ctx, request),
+		cmd := h.generateCommand(ctx, request)
+		var padding []byte
+
+		// [BDI Change] Inject Dummy Command + Padding Data
+		// If BDI is enabled, and no functional command exists, we use the Dummy Command.
+		if h.bdiConfig.Enabled && cmd == nil {
+			// Calculate random padding size (e.g., 100 to 1000 bytes)
+			pMin := int(h.bdiConfig.PaddingMin)
+			pMax := int(h.bdiConfig.PaddingMax)
+			paddingLen := 0
+			if pMax > pMin {
+				paddingLen = rand.Intn(pMax-pMin) + pMin
+			}
+
+			if paddingLen > 0 {
+				// 1. Create the command telling client to skip 'paddingLen'
+				cmd = &encoding.CommandDummy{PaddingLength: uint16(paddingLen)}
+
+				// 2. Generate the actual random garbage payload
+				padding = make([]byte, paddingLen)
+				rand.Read(padding)
+			}
 		}
-		return transferResponse(timer, svrSession, request, response, link.Reader, writer)
+
+		response := &protocol.ResponseHeader{
+			Command: cmd,
+		}
+
+		// Pass the generated padding to transferResponse
+		return h.transferResponse(timer, svrSession, request, response, link.Reader, writer, padding)
 	}
 
 	requestDonePost := task.OnSuccess(requestDone, task.Close(link.Writer))

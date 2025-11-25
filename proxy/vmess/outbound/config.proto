@@ -10,8 +10,17 @@ import "common/protocol/server_spec.proto";
 import "common/net/address.proto";
 import "common/protoext/extensions.proto";
 
+// [BDI] Traffic Shaping Configuration for Client
+message BDIConfig {
+  bool enabled = 1;
+  int32 packet_rate = 2; // Packets per second for fake requests (approx)
+}
+
 message Config {
   repeated v2ray.core.common.protocol.ServerEndpoint Receiver = 1;
+
+  // [BDI] Add BDI config to outbound
+  BDIConfig bdi_settings = 2;
 }
 
 

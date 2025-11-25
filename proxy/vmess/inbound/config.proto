@@ -1,13 +1,13 @@
 syntax = "proto3";
 
 package v2ray.core.proxy.vmess.inbound;
-option csharp_namespace = "V2Ray.Core.Proxy.Vmess.Inbound";
 option go_package = "github.com/v2fly/v2ray-core/v5/proxy/vmess/inbound";
 option java_package = "com.v2ray.core.proxy.vmess.inbound";
 option java_multiple_files = true;
 
 import "common/protocol/user.proto";
-import "common/protoext/extensions.proto";
+// [FIX] Add this import for protoext options
+import "common/protoext/extensions.proto"; 
 
 message DetourConfig {
   string to = 1;
@@ -18,14 +18,26 @@ message DefaultConfig {
   uint32 level = 2;
 }
 
+// [BDI] Traffic Shaping Configuration
+message BDIConfig {
+  bool enabled = 1;
+  int32 padding_min = 2; // e.g., 100 bytes
+  int32 padding_max = 3; // e.g., 1500 bytes
+  int32 jitter_min = 4;  // e.g., 5 ms
+  int32 jitter_max = 5;  // e.g., 50 ms
+}
+
 message Config {
   repeated v2ray.core.common.protocol.User user = 1;
   DefaultConfig default = 2;
   DetourConfig detour = 3;
   bool secure_encryption_only = 4;
+  
+  // [BDI] Add BDI config to inbound
+  BDIConfig bdi_settings = 5; 
 }
 
-message SimplifiedConfig{
+message SimplifiedConfig {
   option (v2ray.core.common.protoext.message_opt).type = "inbound";
   option (v2ray.core.common.protoext.message_opt).short_name = "vmess";
 
